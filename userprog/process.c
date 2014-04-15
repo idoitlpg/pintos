@@ -21,6 +21,65 @@
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
+/* Add file to FD List */
+int process_add_file (struct file *f)
+{
+  struct thread *cur = thread_current ();
+  struct fd_table *fdt = palloc_get_page(0);
+  if (!fdt)
+  {
+    return -1;
+  }
+
+  /* Alloc file to FDT and increase fd count */
+  fdt->file = f;
+  fdt->fd = cur->fd_count++;
+
+  /* Add to List */
+  list_push_back (&cur->fd_list, &fdt->fd_elem);
+
+  return fdt->fd;
+}
+
+/* Get file from FD List */
+struct file *process_get_file (int fd)
+{
+  struct thread *cur = thread_current ();
+  struct list_elem *e;
+
+  for (e = list_begin (&cur->fd_list); e != list_end (&cur->fd_list);
+       e = list_next (e))
+    {
+      struct fd_table *fd_info = list_entry (e, struct fd_table, fd_elem);
+      if (fd == fd_info->fd)
+        return fd_info->file;
+    }
+
+  return NULL;
+}
+
+/* Close file from FD List */
+void process_close_file (int fd)
+{
+  struct thread *cur = thread_current ();
+  struct list_elem *e;
+
+  for (e = list_begin (&cur->fd_list); e != list_end (&cur->fd_list);
+       e = list_next (e))
+    {
+      struct fd_table *fd_info = list_entry (e, struct fd_table, fd_elem);
+      if (fd == fd_info->fd)
+      {
+        /* Close and Remove and free */
+        fd_info->fd = -1;
+        file_close (fd_info->file);
+        list_remove (&fd_info->fd_elem);
+        palloc_free_page (fd_info);
+        break;
+      }
+    } 
+}
+
 /* Check child processes with pid */
 struct thread *get_child_process (int pid)
 {
@@ -74,11 +133,12 @@ process_execute (const char *file_name)
 
   /* Create a new thread to execute FILE_NAME which Parsed from above. */
   tid = thread_create (parsed_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy);
 
   /* Free the allocated memory */
   palloc_free_page (parsed_name);
+
+  if (tid == TID_ERROR)
+    palloc_free_page (fn_copy);
 
   return tid;
 }
@@ -141,6 +201,7 @@ start_process (void *file_name_)
   char *token = NULL;
   char *save_pointer = NULL;
   int count = 0;
+  int i = 0;
 
   /* Parse all tokens from arguments and count it */
   parse = palloc_get_page (0);
@@ -156,24 +217,37 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load ((const char*)parse[0], &if_.eip, &if_.esp);
+  success = load (parse[0], &if_.eip, &if_.esp);
 
   /* Resume the parent process */
   sema_up (&thread_current()->sema_load);
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
   if (!success)
   {
-    thread_current()->thread_loaded = -1;
+    thread_current()->thread_loaded = FAIL_LOAD;
+
+    for (i = 0; i < count ; i++)
+      palloc_free_page (parse[i]);
+    palloc_free_page (parse);
+
     thread_exit ();
   }
-  
-  thread_current()->thread_loaded = 1;
+  else
+  {
+    thread_current()->thread_loaded = SUCCESS_LOAD;
 
-  /* Store parsed arguments into stack and dump it */
-  argument_stack(parse, count, &if_.esp);
-  hex_dump((uintptr_t)if_.esp, if_.esp, PHYS_BASE - if_.esp, true);
+    /* Store parsed arguments into stack and dump it */
+    argument_stack(parse, count, &if_.esp);
+    /* debug dump for the argument */
+    //hex_dump((uintptr_t)if_.esp, if_.esp, PHYS_BASE - if_.esp, true);
+  }
+
+  palloc_free_page (file_name);
+
+  for (i = 0; i < count ; i++)
+    palloc_free_page (parse[i]);
+  palloc_free_page (parse);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -203,6 +277,10 @@ process_wait (tid_t child_tid UNUSED)
   child = get_child_process (child_tid);
   if (!child)
     return -1;
+  if (child->wait)
+    return -1;
+
+  child->wait = true;
 
   if (!child->thread_exit)
     sema_down (&child->sema_exit);
@@ -219,6 +297,13 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+
+  /* Close All files from the List */
+  while (cur->fd_count > DEFAULT_FD)
+  {
+    cur->fd_count--;
+    process_close_file (cur->fd_count);
+  }
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */

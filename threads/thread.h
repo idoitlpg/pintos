@@ -81,6 +81,16 @@ typedef int tid_t;
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
+
+#define DEFAULT_FD 2
+
+struct fd_table
+  {
+    int fd;
+    struct file *file;
+    struct list_elem fd_elem;
+  };
+
 struct thread
   {
     /* Owned by thread.c. */
@@ -102,16 +112,20 @@ struct thread
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
 
-    /* variables for Project.3 */
+    /* Variables for Project.3 */
     struct thread *parent;		/* Parent Procsee */
     struct list_elem child_list_elem;	/* List element for Child Process */
     struct list child_list;		/* List for Child Process */
     int thread_loaded;			/* Load status of Process */
     bool thread_exit;			/* Exit ststus */
+    bool wait;
     struct semaphore sema_exit;		/* Semaphore for exit */
     struct semaphore sema_load;		/* Semaphone for load */
     int thread_exit_status;		/* Status for exit */
-    
+
+    /* Variables for Project.4 */
+    struct list fd_list;		/* List of File Descriptor Table */
+    unsigned int fd_count;		/* Count for File Descriptor */
   };
 
 /* If false (default), use round-robin scheduler.

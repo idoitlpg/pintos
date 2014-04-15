@@ -209,12 +209,19 @@ thread_create (const char *name, int priority,
   /* Store current process to parent process */
   t->parent = thread_current ();
   /* Initialization for the status */
-  t->thread_loaded = false;
+  t->thread_loaded = 0;
   t->thread_exit = false;
+  t->wait = false;
   sema_init (&t->sema_exit, 0);
   sema_init (&t->sema_load, 0);
   /* Add to Child Process list */
   list_push_back (&thread_current()->child_list, &t->child_list_elem);
+
+  /* Initialize fd */
+  t->fd_count = DEFAULT_FD;
+
+  /* Alloc FD Table */
+  list_init (&t->fd_list);
 
   /* Add to run queue. */
   thread_unblock (t);
@@ -307,6 +314,7 @@ thread_exit (void)
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
+
   intr_disable ();
   list_remove (&thread_current()->allelem);
 
@@ -314,6 +322,7 @@ thread_exit (void)
   sema_up (&thread_current()->sema_exit);
 
   thread_current ()->status = THREAD_DYING;
+
   schedule ();
   NOT_REACHED ();
 }
